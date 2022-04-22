@@ -2,7 +2,11 @@
 
 import sys
 import os
+import threading
+import subprocess
+
 from fuse import FUSE, FuseOSError, Operations, fuse_get_context
+
 
 class Presenter(Operations):
     def __init__(self, base):
@@ -38,7 +42,7 @@ class Presenter(Operations):
         orig_path = self._base_path(path)
         return os.open(orig_path, flags)
 
-def main(base, view):
+def mount(base, view):
     # Check if view is an empty directory and fail if not
     # Create the directory if not present
 
@@ -46,10 +50,40 @@ def main(base, view):
 
     # Provide a way to clean-up the view dir when we are done
 
+def env_reader():
+    ppid = os.getppid()
+
+    ### The BPF command being used to spy on env var updates in the parent process
+    # All the escaping is confusing here, so an explanation of what we are doing:
+    # We run a uprobe trace on the "bind_variable" function in bash
+    # we check the first argument - the key name, is not equal to "_"
+    #   - this is because there are a *lot* of fires with that key, something like a processing step
+    # We print out the first and second args, which happens to be the key and value
+    # We restrict this tracing to only the parent shell
+
+    # Obviously, this only works for bash, that too, one located at `/usr/bin/bash`.
+
+    cmd = "sudo bpftrace -e 'uprobe:/usr/bin/bash:bind_variable /str(arg0) != \"_\"/{ printf(\"%s=%s\\n\", str(arg0), str(arg1)) }' -p " + str(ppid)
+
+    tracer = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    for line in tracer.stdout:
+        entry = line.decode().rstrip()
+        try:
+            (key, value) = entry.split('=')
+            # Only process keys which are all upper case
+            if key.isupper():
+                os.environ[key] = value
+        except ValueError:
+            # in case of any extra lines not in key = val format
+            pass
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     if len(args) != 2:
         print("Expect 2 args: <base dir> <view dir>")
         exit(1)
 
-    main(args[0], args[1])
+    envReader = threading.Thread(target=env_reader)
+    envReader.start()
+
+    mount(args[0], args[1])
