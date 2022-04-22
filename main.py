@@ -5,12 +5,15 @@ import os
 import threading
 import subprocess
 
+from envsubst import envsubst
 from fuse import FUSE, FuseOSError, Operations, fuse_get_context
-
 
 class Presenter(Operations):
     def __init__(self, base):
         self.base = base
+        self.fd = 0
+        self.filestore = {}
+        self.meta = {}
 
     def _base_path(self, relpath):
         if relpath.startswith("/"):
@@ -18,16 +21,31 @@ class Presenter(Operations):
         path = os.path.join(self.base, relpath)
         return path
 
-    def access(self, path, mode):
-        orig_path = self._base_path(path)
-        if not os.access(orig_path, mode):
-            raise FuseOSError(errno.EACCES)
-
     def getattr(self, path, fh=None):
         orig_path = self._base_path(path)
         st = os.lstat(orig_path)
-        return dict((key, getattr(st, key)) for key in ('st_atime', 'st_ctime',
+        attrs = dict((key, getattr(st, key)) for key in ('st_atime', 'st_ctime',
                      'st_gid', 'st_mode', 'st_mtime', 'st_nlink', 'st_size', 'st_uid'))
+
+        self.meta[path] = attrs
+
+        # Do the actual load and transform here - since all programs call getattr before open
+        # The size that getattr returns is used to read in bytes
+        # so, this has to be "correct"
+
+        if os.path.isfile(orig_path):
+            # Pull out data from the original file
+            orig = open(orig_path, "r")
+            # read raw data
+            data = orig.read()
+            orig.close()
+
+            # substitute vars and store file
+            self.filestore[path] = envsubst(data).encode('ascii')
+            # update size metadata
+            self.meta[path]['st_size'] = len(self.filestore[path])
+
+        return attrs
 
     def readdir(self, path, fh):
         orig_path = self._base_path(path)
@@ -39,8 +57,12 @@ class Presenter(Operations):
             yield r
 
     def open(self, path, flags):
-        orig_path = self._base_path(path)
-        return os.open(orig_path, flags)
+        # create and return dummy fd
+        self.fd += 1
+        return self.fd
+
+    def read(self, path, size, offset, fh):
+        return self.filestore[path][offset:offset + size]
 
 def mount(base, view):
     # Check if view is an empty directory and fail if not
