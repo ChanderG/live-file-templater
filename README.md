@@ -129,6 +129,11 @@ Now, the main python program runs the bpftrace command in a thread and reads fro
 
 The templated files are all stored in-memory for now.
 
+## Acknowledgements
+
+1. https://www.stavros.io/posts/python-fuse-filesystem/
+2. https://github.com/fusepy/fusepy/blob/master/examples/memory.py
+
 ## LICENSE 
 
 MIT
