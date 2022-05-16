@@ -3,6 +3,8 @@
 Dynamically re-templatize a folder of files.
 Powered by FUSE and eBPF.
 
+![lft in action](demo.gif)
+
 ## What?
 
 The problem this is meant is solve is the following:
